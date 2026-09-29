@@ -28,6 +28,35 @@ def _strip_json_fence(text: str) -> str:
     return stripped
 
 
+def _json_error_excerpt(text: str, position: int, radius: int = 700) -> str:
+    """Return a compact excerpt around a JSON parse failure."""
+    start = max(position - radius, 0)
+    end = min(position + radius, len(text))
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(text) else ""
+    return f"{prefix}{text[start:end]}{suffix}"
+
+
+def _json_repair_user_prompt(
+    *,
+    original_user_prompt: str,
+    invalid_content: str,
+    error: json.JSONDecodeError,
+) -> str:
+    """Ask the model to regenerate the same answer as syntactically valid JSON."""
+    excerpt = _json_error_excerpt(invalid_content, error.pos)
+    return (
+        f"{original_user_prompt}\n\n"
+        "The previous response was not valid JSON and could not be parsed.\n"
+        f"Parser error: {error.msg} at line {error.lineno}, column {error.colno}.\n"
+        "Invalid response excerpt near the parser error:\n"
+        f"{excerpt}\n\n"
+        "Regenerate the complete answer as exactly one syntactically valid JSON object. "
+        "Escape every quote, backslash, newline, and other control character inside string values. "
+        "Do not include Markdown fences or explanatory text."
+    )
+
+
 def _usage_value(usage: Any, key: str) -> int:
     """Read token usage fields from SDK objects or dict-like gateway responses."""
     if isinstance(usage, dict):
@@ -71,20 +100,42 @@ class JsonChatClient:
         model: str | None = None,
         timeout_seconds: int = 180,
     ) -> dict:
-        """Send one JSON chat request and retry automatically for minor network instability."""
-        response = self._request_with_retry(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=temperature,
-            model=model or self.settings.default_model,
-            timeout_seconds=timeout_seconds,
-        )
-        self._record_token_usage(response)
+        """Send one JSON chat request and retry minor network or JSON syntax failures."""
+        selected_model = model or self.settings.default_model
+        current_user_prompt = user_prompt
+        last_error: json.JSONDecodeError | None = None
+        for parse_attempt in range(3):
+            response = self._request_with_retry(
+                system_prompt=system_prompt,
+                user_prompt=current_user_prompt,
+                temperature=temperature if parse_attempt == 0 else 0,
+                model=selected_model,
+                timeout_seconds=timeout_seconds,
+            )
+            self._record_token_usage(response)
 
-        content = response.choices[0].message.content
-        if not isinstance(content, str):
-            raise RuntimeError("Model returned non-text content.")
-        return json.loads(_strip_json_fence(content))
+            content = response.choices[0].message.content
+            if not isinstance(content, str):
+                raise RuntimeError("Model returned non-text content.")
+            stripped_content = _strip_json_fence(content)
+            try:
+                return json.loads(stripped_content)
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                if parse_attempt >= 2:
+                    excerpt = _json_error_excerpt(stripped_content, exc.pos)
+                    raise RuntimeError(
+                        "Model returned invalid JSON after repair retries: "
+                        f"{exc.msg} at line {exc.lineno}, column {exc.colno}.\n"
+                        f"Excerpt near error:\n{excerpt}"
+                    ) from exc
+                current_user_prompt = _json_repair_user_prompt(
+                    original_user_prompt=user_prompt,
+                    invalid_content=stripped_content,
+                    error=exc,
+                )
+
+        raise RuntimeError(f"Model returned invalid JSON: {last_error}") from last_error
 
     def token_usage_snapshot(self) -> dict[str, int]:
         """Return the cumulative token usage observed by this client."""

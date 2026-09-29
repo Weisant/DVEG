@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import html as html_lib
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,13 +16,14 @@ import trafilatura
 from agent.models import EvidenceItem
 
 
-REQUEST_TIMEOUT_SECONDS = 20
+REQUEST_TIMEOUT_SECONDS = 60
 CPE_VERSION_LIMIT = 10
 BASE_DIR = Path(__file__).resolve().parents[1]
 CVE_INFO_DIR = BASE_DIR / "data" / "cve_info"
+AGENT_ENV_FILE = BASE_DIR / "agent" / ".env"
 SCHEMA_VERSION = "10"
 MAX_REFERENCE_ADVISORIES = 5
-MAX_REFERENCE_SNIPPETS_PER_ADVISORY = 5
+MAX_REFERENCE_SNIPPETS_PER_ADVISORY = 8
 MAX_REFERENCE_SNIPPET_CHARS = 700
 REFERENCE_WINDOW_CHARS = 900
 CPE_PART_LABELS = {
@@ -319,9 +322,9 @@ def fetch_nvd_cve_info(cve_id: str) -> dict[str, Any]:
     cve_id = normalize_cve_id(cve_id)
     source_url = (
         "https://services.nvd.nist.gov/rest/json/cves/2.0?"
-        + parse.urlencode({"cveId": cve_id})
+        + parse.urlencode({"cveIds": cve_id})
     )
-    payload = _fetch_json(source_url)
+    payload = _fetch_json(source_url, headers=_nvd_request_headers())
     vulnerabilities = payload.get("vulnerabilities")
     if not isinstance(vulnerabilities, list) or not vulnerabilities:
         raise ValueError(f"NVD did not return a vulnerability record for {cve_id}.")
@@ -338,7 +341,7 @@ def build_unavailable_nvd_info(cve_id: str) -> dict[str, Any]:
     cve_id = normalize_cve_id(cve_id)
     source_url = (
         "https://services.nvd.nist.gov/rest/json/cves/2.0?"
-        + parse.urlencode({"cveId": cve_id})
+        + parse.urlencode({"cveIds": cve_id})
     )
     return {
         "available": False,
@@ -441,6 +444,7 @@ def fetch_reference_advisories(
             continue
         snippets = _extract_reference_snippets(
             html=html,
+            source_url=url,
             cve_id=cve_id,
             db_type=db_type,
         )
@@ -673,6 +677,7 @@ def _reference_source(
 def _extract_reference_snippets(
     *,
     html: str,
+    source_url: str,
     cve_id: str,
     db_type: str,
 ) -> list[dict[str, str]]:
@@ -702,8 +707,122 @@ def _extract_reference_snippets(
                 {"reason": ",".join(reasons), "text": text},
             )
         )
+    for artifact_snippet in _extract_reference_artifact_link_snippets(
+        html=html,
+        source_url=source_url,
+        db_type=db_type,
+    ):
+        text = artifact_snippet["text"]
+        if text in seen:
+            continue
+        seen.add(text)
+        selected.append((100, artifact_snippet))
+    for debian_snippet in _extract_debian_version_event_snippets(
+        html=html,
+        full_text=full_text,
+        db_type=db_type,
+    ):
+        text = debian_snippet["text"]
+        if text in seen:
+            continue
+        seen.add(text)
+        selected.append((_debian_version_event_score(debian_snippet), debian_snippet))
     selected.sort(key=lambda item: item[0], reverse=True)
     return [item for _score, item in selected[:MAX_REFERENCE_SNIPPETS_PER_ADVISORY]]
+
+
+def _extract_reference_artifact_link_snippets(
+    *,
+    html: str,
+    source_url: str,
+    db_type: str,
+) -> list[dict[str, str]]:
+    db = db_type.strip().lower()
+    tokens = [db] if db else []
+    if db == "postgres":
+        tokens.append("postgresql")
+    if db == "mongo":
+        tokens.append("mongodb")
+
+    snippets: list[dict[str, str]] = []
+    for href in re.findall(r"""href=["']([^"']+)["']""", html, flags=re.I):
+        url = parse.urljoin(source_url, href)
+        lowered = parse.unquote(url).lower()
+        if not lowered.endswith((".tar.gz", ".tgz", ".zip", ".tar.xz", ".tar.bz2")):
+            continue
+        if tokens and not any(token in lowered for token in tokens):
+            continue
+        if not re.search(
+            r"\d+(?:[._-]\d+)+(?:[._-]?(?:alpha|beta|rc|pre|preview)\d*)?",
+            lowered,
+        ):
+            continue
+        snippets.append(
+            {
+                "reason": "artifact_link,version_context,package_context",
+                "text": f"Reference artifact link: {url}",
+            }
+        )
+    return snippets[:MAX_REFERENCE_SNIPPETS_PER_ADVISORY]
+
+
+def _extract_debian_version_event_snippets(
+    *,
+    html: str,
+    full_text: str,
+    db_type: str,
+) -> list[dict[str, str]]:
+    package = re.escape(db_type.strip().lower())
+    if not package:
+        return []
+    version = r"[A-Za-z0-9~:+][A-Za-z0-9._~:+-]*[A-Za-z0-9~+]"
+    html_patterns = [
+        (rf"<p>\s*(Found in versions? {package}/.*?)\s*</p>", "debian_found_summary"),
+        (rf"<p>\s*(Fixed in versions? {package}/.*?)\s*</p>", "debian_fixed_summary"),
+    ]
+    patterns = [
+        (rf"Marked as found in versions? {package}/{version}", "debian_found_version_event"),
+        (rf"Subject: Bug#[0-9]+: fixed in {package} {version}", "debian_fixed_version_event"),
+        (rf"Source-Version: {version}", "debian_closing_source_version"),
+    ]
+    snippets: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for pattern, reason in html_patterns:
+        for match in re.finditer(pattern, html, flags=re.I | re.S):
+            text = _clean_text(html_lib.unescape(re.sub(r"<[^>]+>", " ", match.group(1))))
+            if text in seen:
+                continue
+            seen.add(text)
+            snippets.append(
+                {
+                    "reason": f"{reason},version_context,package_context",
+                    "text": text,
+                }
+            )
+    for pattern, reason in patterns:
+        for match in re.finditer(pattern, full_text, flags=re.I):
+            text = match.group(0).strip()
+            if text in seen:
+                continue
+            seen.add(text)
+            if text.lower().startswith("source-version:"):
+                text = f"Debian closing source version: {text}"
+            snippets.append(
+                {
+                    "reason": f"{reason},version_context,package_context",
+                    "text": text,
+                }
+            )
+    return snippets[:MAX_REFERENCE_SNIPPETS_PER_ADVISORY]
+
+
+def _debian_version_event_score(snippet: dict[str, str]) -> int:
+    reason = snippet.get("reason", "")
+    if "debian_found_summary" in reason or "debian_fixed_summary" in reason:
+        return 95
+    if "debian_closing_source_version" in reason:
+        return 85
+    return 90
 
 
 def _reference_candidate_texts(
@@ -1332,8 +1451,29 @@ def _clean_text(text: str) -> str:
 
 
 
-def _fetch_json(url: str) -> dict[str, Any]:
-    body = _fetch_text(url)
+def _nvd_request_headers() -> dict[str, str]:
+    api_key = _optional_config_value("NVD_API_KEY") or _optional_config_value("nvd_api_key")
+    return {"apiKey": api_key} if api_key else {}
+
+
+def _optional_config_value(key: str) -> str:
+    value = os.environ.get(key)
+    if value:
+        return value.strip()
+    if not AGENT_ENV_FILE.exists():
+        return ""
+    for raw_line in AGENT_ENV_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        config_key, config_value = line.split("=", 1)
+        if config_key.strip() == key:
+            return config_value.strip()
+    return ""
+
+
+def _fetch_json(url: str, *, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    body = _fetch_text(url, headers=headers)
     try:
         parsed = json.loads(body)
     except json.JSONDecodeError as exc:
@@ -1343,14 +1483,16 @@ def _fetch_json(url: str) -> dict[str, Any]:
     return parsed
 
 
-def _fetch_text(url: str) -> str:
+def _fetch_text(url: str, *, headers: dict[str, str] | None = None) -> str:
+    request_headers = {
+        "Accept": "application/json, text/html;q=0.9, */*;q=0.8",
+        "User-Agent": "db-env-gc/0.3",
+        "Connection": "close",
+    }
+    request_headers.update(headers or {})
     req = request.Request(
         url,
-        headers={
-            "Accept": "application/json, text/html;q=0.9, */*;q=0.8",
-            "User-Agent": "db-env-gc/0.3",
-            "Connection": "close",
-        },
+        headers=request_headers,
         method="GET",
     )
     last_error: error.URLError | None = None

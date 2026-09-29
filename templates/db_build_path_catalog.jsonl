@@ -10,11 +10,11 @@
     "https://github.com/ClickHouse/ClickHouse/archive/refs/tags/v$VERSION-stable.tar.gz"
   ],
   "binary_url": "",
-  "custom_repo": "deb https://mirrors.aliyun.com/clickhouse/deb/stable main/",
+  "custom_repo": "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://packages.clickhouse.com/deb stable main",
   "build_style": "",
   "notes": [
     "When package_repo: prefer ubuntu:20.04 and install exact versions of clickhouse-common-static, clickhouse-server, and clickhouse-client from the configured APT repository.",
-    "Install gnupg and dirmngr, then import key E0C56BD4 from keyserver.ubuntu.com before updating the ClickHouse repository.",
+    "When package_repo: do not use apt-key adv or keyserver.ubuntu.com for the ClickHouse signing key. Install ca-certificates, curl, and gnupg; download the official ClickHouse repository key with curl from https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key; store it with `gpg --dearmor -o /usr/share/keyrings/clickhouse-keyring.gpg`; then add the APT source with `signed-by=/usr/share/keyrings/clickhouse-keyring.gpg` before running apt-get update.",
     "For legacy packages, install libcap2-bin and run `setcap -r /usr/bin/clickhouse` without `|| true` before switching to the clickhouse user.",
     "Run clickhouse-server as the clickhouse user and ensure its data, log, and configuration directories have appropriate permissions.",
     "When source_build: ClickHouse source builds require CMake/Ninja, Python, and project-specific build dependencies; do not treat the GitHub source archive as a simple configure/make build."
@@ -53,27 +53,35 @@
   "custom_repo": "",
   "build_style": "multi_stage_server",
   "notes": [
-    "Install exact CouchDB version from source.",
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
-    "Use multi-stage builds in the Dockerfile: the first stage completes compilation, and the second stage only copies the runtime artifacts.",
-    "CouchDB source builds require Erlang/OTP and project build tools such as rebar/autoconf-style dependencies; include them in source_compile dependency checks."
+    "Use a multi-stage source build: the builder installs dependencies and runs the build workflow that matches the target CouchDB major version.",
+    "For CouchDB 1.x source builds, do not use `make release` or copy `rel/couchdb`; run `./configure --prefix=/opt/couchdb`, then `make`, then `make install`, and copy the installed prefix from the builder stage.",
+    "For CouchDB 2.x and later source builds, use the release-tree workflow only when the target version's build system actually provides the release target.",
+    "Install the official source-build prerequisites: a CouchDB-compatible Erlang/OTP, ICU, OpenSSL, Mozilla SpiderMonkey, GNU Make, GCC, help2man, and Python 3 for docs/tests.",
+    "Match SpiderMonkey and Erlang/OTP to the target CouchDB release; pass --spidermonkey-version or --disable-docs to ./configure when required by the selected base image and dependency set.",
+    "Create a dedicated couchdb user with a POSIX shell and writable home, copy the release tree to a stable prefix such as /home/couchdb or /opt/couchdb, and chown it to couchdb:couchdb.",
+    "For CouchDB 3.0 and later, create an admin user before startup; run bin/couchdb as the couchdb user and verify the service on port 5984."
   ]
 }
 
 {
   "id": 4,
   "db_type": "duckdb",
-  "recommended_path": "source_build",
-  "fallback_order": [],
+  "recommended_path": "prebuilt_binary",
+  "fallback_order": [
+    "source_build",
+    "python_package_repo"
+  ],
   "source_url": "https://github.com/duckdb/duckdb/archive/refs/tags/v$VERSION.zip",
   "source_url_fallbacks": [
     "https://github.com/duckdb/duckdb/archive/refs/tags/v$VERSION.tar.gz"
   ],
-  "binary_url": "",
+  "binary_url": "https://github.com/duckdb/duckdb/releases/download/$VERSION/duckdb_cli-linux-amd64.zip",
   "custom_repo": "",
   "build_style": "",
   "notes": [
-    "When source_build: DuckDB GitHub source builds use CMake/Make and may require Python during build generation; include CMake and Python in source_compile dependency checks."
+    "When source_build: DuckDB GitHub source builds use CMake/Make and may require Python during build generation; include CMake and Python in source_compile dependency checks.",
+    "When prebuilt_binary: ensure the CLI binary architecture matches the container platform, and keep the container alive with a non-interactive command instead of treating DuckDB as a server daemon.",
+    "DuckDB is an embedded CLI-based DBMS. When using the official DuckDB image as a reusable image environment, the generated docker-compose service should keep an interactive terminal open by setting stdin_open: true and tty: true, and should start the DuckDB CLI with command [\"duckdb\", \"/shared/test.db\"]. No ports are required."
   ]
 }
 
@@ -92,7 +100,6 @@
   "custom_repo": "",
   "build_style": "",
   "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
     "When prebuilt_binary: use a verified Java runtime base image. Prefer modern maintained DockerHub candidates such as eclipse-temurin:8-jre or eclipse-temurin:8-jre-jammy for Java 8-era Elasticsearch releases; verify the chosen image with check_image_ref before using it in Dockerfile.",
     "When source_build fallback is used: Elasticsearch source builds require an appropriate OpenJDK and Gradle-based Java build tooling; do not use generic C build dependencies.",
     "When source_build fallback is used and a Java build base image is needed: prefer modern maintained DockerHub candidates such as eclipse-temurin:8-jdk or eclipse-temurin:8-jdk-jammy for Java 8-era releases; verify the chosen image with check_image_ref before using it in Dockerfile."
@@ -114,7 +121,6 @@
   "custom_repo": "",
   "build_style": "",
   "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
     "When prebuilt_binary: Uses an appropriate OpenJDK version as the base image, determined by the runtime requirements of the target H2 Database version.",
     "When prebuilt_binary: prefer modern maintained DockerHub Java runtime candidates such as eclipse-temurin:8-jre or eclipse-temurin:8-jre-jammy for Java 8-era H2 releases; verify the chosen image with check_image_ref before using it in Dockerfile.",
     "When source_build fallback is used: H2 source builds require OpenJDK and Java build tooling; do not use generic C build dependencies.",
@@ -137,7 +143,6 @@
   "custom_repo": "",
   "build_style": "",
   "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
     "When source_build fallback is used: InfluxDB source builds require a Go toolchain matching the target release; include Go build dependencies instead of generic C-only dependencies."
   ]
 }
@@ -158,34 +163,22 @@
   "build_style": "multi_stage_server",
   "notes": {
     "common": [
-      "Replace $VERSION with generation_requirements.version.selected before generating any download URL, source directory, binary tarball name, or installation path.",
       "Use a MariaDB artifact that exactly matches the selected version; do not replace it with latest, a nearby major release, or a different stable release.",
       "Before startup, prepare a data directory and initialize MariaDB system tables with mariadb-install-db or mysql_install_db.",
       "Ensure the data directory is owned by the mysql user when the server is started as mysql.",
-      "Use /var/lib/mysql as the conventional Linux data directory unless the generated environment explicitly sets another datadir.",
-      "After installation or extraction, verify the server with mariadbd or mariadbd-safe and verify connectivity with the mariadb or mysql client.",
-      "When generating custom configuration, ensure the selected installation method actually reads the generated my.cnf file."
+      "After installation or extraction, verify the server with mariadbd or mariadbd-safe and verify connectivity with the mariadb or mysql client."
     ],
     "by_path": {
       "source_build": [
         "Follow the official source-build workflow: install build tools and development headers, obtain the source code, configure with CMake, compile with cmake --build, install with cmake --install, initialize system tables, then start and verify the server.",
-        "Prefer the official source tarball for stable and reproducible version-specific builds; Git builds are more suitable for development branches and require submodule initialization.",
-        "Use an out-of-source CMake build directory to keep the source tree clean.",
         "Include required build tools and headers such as compiler toolchain, git, cmake, bison, flex, ncurses development headers, SSL or GnuTLS development headers, zlib development headers, libaio, and Boost.",
-        "If building on a distribution that supports build dependency resolution, enable source repositories and use the native build-dependency command, such as apt build-dep, dnf builddep, or zypper source-install, when appropriate.",
         "Configure the build with CMake options such as CMAKE_INSTALL_PREFIX for the install path, CMAKE_BUILD_TYPE=RelWithDebInfo for a release-like debug-symbol build, WITH_SSL for the SSL backend, and BUILD_CONFIG=mysql_release when matching official release-style builds is desired.",
-        "Add feature-specific dependencies only when required by the selected vulnerability or configuration, such as libcurl for the S3 storage engine, Kerberos headers for GSSAPI, compression libraries for RocksDB or MyRocks, systemd headers for systemd support, and PAM headers for authentication plugins.",
-        "If CMake fails, use the reported missing dependency as the repair target instead of guessing; common failures include missing C++ compiler, old Bison, missing GSSAPI headers, missing curses headers, or insufficient build disk space.",
-        "If CMake options are changed during regeneration, clean the build directory cache rather than deleting the source directory."
+        "Add feature-specific dependencies only when required by the selected vulnerability or configuration, such as libcurl for the S3 storage engine, Kerberos headers for GSSAPI, compression libraries for RocksDB or MyRocks, systemd headers for systemd support, and PAM headers for authentication plugins."
       ],
       "prebuilt_binary": [
         "Use official MariaDB binary tarballs only when the selected version, operating system family, CPU architecture, GLIBC requirement, and systemd requirement are compatible with the target image.",
-        "Binary tarballs are precompiled archives containing executables, libraries, and deployment dependencies; they can be unpacked into a user-selected directory and can support multiple MariaDB versions on the same system.",
-        "Download the correct binary tarball for the target machine; MariaDB binary tarballs follow a version and operating-system naming pattern.",
         "Check GLIBC compatibility before selecting older binary tarballs; tarballs marked with GLIBC requirements require a runtime system with at least the indicated GLIBC version.",
-        "When using systemd-marked tarballs, ensure the runtime environment satisfies the documented systemd and GLIBC requirements.",
         "Extract the binary tarball into a stable installation prefix such as /usr/local/mysql or another explicit directory.",
-        "Use a symbolic link to the extracted version directory when multiple MariaDB versions may coexist or when switching versions is expected.",
         "After extraction, run mariadb-install-db from the extracted installation to initialize the system tables before starting the server.",
         "Avoid accidentally using an old system-wide /etc/my.cnf or /etc/mysql/my.cnf from another MariaDB or MySQL installation; if necessary, pass --defaults-file as the first option to mariadb-install-db, mariadbd-safe, and client commands.",
         "After extraction and initialization, update PATH or call client and server binaries through their absolute paths so that the generated environment uses the tarball installation rather than a system-installed MariaDB."
@@ -210,7 +203,6 @@
   "custom_repo": "",
   "build_style": "",
   "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
     "Template variable $DISTRO must be selected according to the base image and target MongoDB release; do not assume a generic Linux tarball exists.",
     "When source_build fallback is used: MongoDB source builds require Python/SCons and a compatible C++ toolchain; include those build-system dependencies in source_compile dependency checks."
   ]
@@ -219,21 +211,59 @@
 {
   "id": 10,
   "db_type": "mysql",
-  "recommended_path": "source_build",
-  "fallback_order": [],
+  "recommended_path": "prebuilt_binary",
+  "fallback_order": [
+    "source_build"
+  ],
   "source_url": "https://github.com/mysql/mysql-server/archive/mysql-$VERSION.tar.gz",
   "source_url_fallbacks": [
     "https://github.com/mysql/mysql-server/archive/refs/tags/mysql-$VERSION.tar.gz",
     "https://github.com/mysql/mysql-server/archive/refs/tags/mysql-$VERSION.zip"
   ],
-  "binary_url": "",
+  "binary_url": "https://cdn.mysql.com/archives/mysql-$MAJOR_MINOR/mysql-$VERSION-linux-glibc2.12-x86_64.tar.xz",
   "custom_repo": "",
   "build_style": "multi_stage_server",
-  "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
-    "Use multi-stage builds in the Dockerfile: the first stage completes compilation, and the second stage only copies the runtime artifacts.",
-    "MySQL source builds use CMake and server build dependencies such as Bison and required development libraries; include CMake/Bison-style dependencies in source_compile dependency checks."
-  ]
+  "notes": {
+    "common": [
+      "Use the exact MySQL source distribution that matches the selected version; do not substitute it with latest, a nearby release, or a different major version.",
+      "After installation, initialize the MySQL data directory before starting the server.",
+      "Run the MySQL server under a dedicated mysql user rather than as root.",
+      "Verify startup with mysqladmin or a MySQL client command before treating the generated environment as successful."
+    ],
+    "binary_url": [
+      "The binary_url template uses $VERSION for the exact MySQL version, such as 8.0.36.",
+      "Replace $MAJOR_MINOR with the selected version's major.minor series, such as 8.0 for 8.0.36 or 5.7 for 5.7.44.",
+      "MySQL archive binary names vary by release series; if the rendered glibc marker, archive extension, or platform suffix is unavailable, adjust those parts using verified MySQL archive evidence before falling back to source_build."
+    ],
+    "by_path": {
+        "source_build": [
+          "For all MySQL source builds, first classify the selected MYSQL_VERSION into a build family: <=5.1.x, 5.5.x, 5.6.x, 5.7.x, or 8.x. Do not reuse build commands across families without checking the corresponding build system.",
+          "For all MySQL source builds, parameterize the Dockerfile with MYSQL_VERSION and keep the source archive name, extracted directory name, configure/cmake command, install prefix, initialization command, and runtime command aligned with that version.",
+          "For all MySQL source builds, prefer official release source archives when available. Use GitHub repository snapshots only when the selected version and build family are known to support that source layout.",
+          "For all MySQL source builds, use a multi-stage Dockerfile when possible: compile and install MySQL in a builder stage, then copy only the installed MySQL prefix, typically /usr/local/mysql, into the runtime stage.",
+
+          "For MySQL <= 5.1.x builds, do not assume GitHub archive + cmake works. Prefer the official mysql-$VERSION.tar.gz release source archive and use the legacy autotools workflow with ./configure --prefix=/usr/local/mysql, make, and make install.",
+          "For MySQL <= 5.1.x builds, use a legacy-compatible base image and dependencies such as build-essential, bison, perl, libncurses5-dev or libncurses-dev, zlib development files, and optionally libreadline development files. Avoid overly modern build environments when old source versions fail during configuration or compilation.",
+          "For MySQL <= 5.1.x runtime setup, create the mysql user/group, create and chown the data directory, initialize the database with mysql_install_db, and start the server with mysqld_safe using the configured basedir and datadir.",
+
+          "For legacy MySQL 5.5.x builds, use a legacy-compatible base image and toolchain matching the Dockerfile strategy, such as buildpack-deps:xenial for the builder stage and ubuntu:xenial for runtime.",
+          "For legacy MySQL 5.5.x builds from GitHub source snapshots, download GNU m4 from https://ftp.gnu.org/gnu/m4/m4-1.4.9.tar.gz and GNU bison from https://ftp.gnu.org/gnu/bison/bison-2.5.1.tar.gz, unpack each archive, and install each tool with ./configure, make, and make install before compiling MySQL.",
+          "For legacy MySQL 5.5.x builds, build from mysql-server-mysql-$VERSION with cmake ., make, and make install, then prepare the runtime stage with the mysql user/group, /usr/local/mysql/mysql-files mode 750, mysql_install_db, and mysqld_safe.",
+
+          "For MySQL 5.6.x builds, use CMake rather than the legacy ./configure workflow. Use a compatible Linux base image and install build-essential, cmake, bison, perl, libncurses development files, zlib development files, and OpenSSL development files when required.",
+          "For MySQL 5.6.x builds, configure CMake explicitly with -DCMAKE_INSTALL_PREFIX=/usr/local/mysql and other required options for the target environment. Do not require Boost unless the selected 5.6.x source package explicitly needs it.",
+          "For MySQL 5.6.x runtime setup, create the mysql user/group and runtime directories, initialize the data directory with scripts/mysql_install_db or mysql_install_db depending on the installed layout, and start the server with mysqld_safe.",
+
+          "For MySQL 5.7.x builds, use CMake with explicit installation and dependency options. Install build-essential, cmake, bison, perl, libncurses development files, zlib development files, OpenSSL development files, and Boost handling support.",
+          "For MySQL 5.7.x builds, handle Boost explicitly. Either provide a compatible Boost source directory with -DWITH_BOOST=/path/to/boost or use -DDOWNLOAD_BOOST=1 -DWITH_BOOST=/path/to/boost when network access is allowed during build.",
+          "For MySQL 5.7.x runtime setup, do not use mysql_install_db as the primary initialization path. Initialize the data directory with bin/mysqld --initialize or bin/mysqld --initialize-insecure, then start the server with mysqld_safe or mysqld using the configured basedir and datadir.",
+
+          "For MySQL 8.x builds, use a modern base image and install version-compatible build dependencies, including a modern C/C++ compiler, CMake, make, OpenSSL development files, ncurses development files, and Boost when required.",
+          "For MySQL 8.x builds, configure CMake explicitly with options such as -DCMAKE_INSTALL_PREFIX=/usr/local/mysql, -DBUILD_CONFIG=mysql_release, -DWITH_SSL, and -DWITH_BOOST when the selected version requires them.",
+          "For MySQL 8.x runtime setup, create the mysql user/group and owned runtime directories, initialize the data directory with bin/mysqld --initialize or bin/mysqld --initialize-insecure, and start the server with mysqld_safe or mysqld using the configured basedir and datadir."
+      ]
+    }
+  }
 }
 
 {
@@ -266,9 +296,7 @@
   "custom_repo": "",
   "build_style": "",
   "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
     "Template variable $HBASE_VERSION should come from generation_requirements.artifact_requirements or manual_notes; if absent, the generator should infer a compatible HBase version and document the inferred value and rationale in README.md.",
-    "When prebuilt_binary: Uses an appropriate OpenJDK version as the base image and HBase version by https://archive.apache.org/dist/hbase/$HBASE_VERSION/hbase-$HBASE_VERSION-bin.tar.gz, determined by the runtime requirements of the target OpenTSDB version.",
     "When prebuilt_binary: prefer modern maintained DockerHub Java runtime candidates such as eclipse-temurin:8-jre or eclipse-temurin:8-jre-jammy for Java 8-era OpenTSDB/HBase releases; verify the chosen image with check_image_ref before using it in Dockerfile.",
     "When source_build fallback is used: OpenTSDB source builds require OpenJDK and Java build tooling such as Maven; include them in source_compile dependency checks.",
     "When source_build fallback is used and a Java build base image is needed: prefer modern maintained DockerHub candidates such as eclipse-temurin:8-jdk or eclipse-temurin:8-jdk-jammy for Java 8-era releases; verify the chosen image with check_image_ref before using it in Dockerfile."
@@ -287,11 +315,24 @@
   "binary_url": "",
   "custom_repo": "",
   "build_style": "multi_stage_server",
-  "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
-    "Use multi-stage builds in the Dockerfile: the first stage completes compilation, and the second stage only copies the runtime artifacts.",
-    "PostgreSQL source builds should include development libraries required by the selected configure options, commonly readline and zlib for a standard server and CLI build."
-  ]
+  "notes": {
+    "common": [
+      "Use the exact PostgreSQL source release matching the selected version; do not substitute it with latest or another nearby version.",
+      "After installation, initialize a data directory with initdb before starting the server.",
+      "Run initdb and PostgreSQL as the dedicated postgres user, not as root.",
+      "Verify startup with pg_ctl, psql, or another PostgreSQL client command."
+    ],
+    "by_path": {
+      "source_build": [
+        "Follow the official source installation workflow: ./configure, make, make install, initdb, pg_ctl start, and client verification.",
+        "Use multi-stage builds: compile and install in the builder stage, then copy only runtime artifacts and required libraries to the final image.",
+        "Include required build tools such as a C compiler, GNU make, tar, gzip or bzip2, Flex, Bison, and Perl.",
+        "Include development libraries required by selected configure options; standard builds commonly require readline and zlib unless disabled.",
+        "Use explicit configure options when needed, such as --prefix and feature-specific flags required by the target vulnerability.",
+        "Create the dedicated postgres user and chown the data directory before running initdb; run both initdb and pg_ctl/server startup as the postgres user, not as root. In Dockerfile or entrypoint scripts, switch users with USER postgres, su/su-exec/gosu, or an equivalent mechanism before executing those commands."
+      ]
+    }
+  }
 }
 
 {
@@ -308,7 +349,6 @@
   "custom_repo": "",
   "build_style": "multi_stage_server",
   "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
     "Use multi-stage builds in the Dockerfile: the first stage completes compilation, and the second stage only copies the runtime artifacts.",
     "Redis release source builds normally require a C toolchain and make; Tcl is only required if the generated Dockerfile runs the Redis test suite."
   ]
@@ -330,7 +370,6 @@
   "custom_repo": "",
   "build_style": "",
   "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
     "When prebuilt_binary: Uses an appropriate OpenJDK version as the base image, determined by the runtime requirements of the target Solr version.",
     "When prebuilt_binary: prefer modern maintained DockerHub Java runtime candidates such as eclipse-temurin:8-jre or eclipse-temurin:8-jre-jammy for Java 8-era Solr releases; verify the chosen image with check_image_ref before using it in Dockerfile.",
     "When source_build fallback is used: Solr source builds require an appropriate OpenJDK and Java build tooling such as Gradle/Ant depending on the target release; include the Java build toolchain in dependency checks.",
@@ -352,9 +391,9 @@
   "custom_repo": "",
   "build_style": "single_stage_embedded",
   "notes": [
-    "Template variable $VERSION must be replaced with generation_requirements.version.selected before generating files.",
     "Use single_stage_embedded builds in the Dockerfile.",
-    "SQLite GitHub source tree builds require tcl-dev during build because make generates sqlite3.c from Tcl scripts such as tool/mksqlite3c.tcl; include the corresponding base-image package in source_compile dependency checks and Dockerfile installs."
+    "SQLite GitHub source tree builds require tcl-dev during build because make generates sqlite3.c from Tcl scripts such as tool/mksqlite3c.tcl; include the corresponding base-image package in source_compile dependency checks and Dockerfile installs.",
+    "SQLite is an embedded database and has no long-running server process; the Dockerfile should not use sqlite3 as a service startup command because it exits immediately. Use a keep-alive command such as CMD [\"tail\", \"-f\", \"/dev/null\"] when an interactive/test container is needed, and invoke sqlite3 explicitly in test commands."
   ]
 }
 

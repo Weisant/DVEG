@@ -114,6 +114,8 @@ def check_package_version(
     snapshot_info = None
     package_version_verified = False
     default_package_version_available = False
+    archive_package_available = False
+    requires_archive_source = False
     requires_snapshot_source = False
     available = default_sources_available
 
@@ -143,10 +145,20 @@ def check_package_version(
             if available_package_names is not None
             else _available_package_names(distribution, normalized_release)
         )
-        if default_sources_available and package_name in package_names:
-            default_package_version_available = True
+        if package_name in package_names:
+            default_package_version_available = default_sources_available
+            archive_package_available = not default_sources_available and bool(
+                _archived_source_config(distribution, normalized_release)
+            )
+            requires_archive_source = archive_package_available
             available = True
-            notes.append("Package name found in the base image distribution repositories.")
+            if archive_package_available:
+                notes.append(
+                    "Package name found in archived distribution repositories; "
+                    "replacement package sources are required."
+                )
+            else:
+                notes.append("Package name found in the base image distribution repositories.")
         else:
             available = False
             notes.append("Package name was not found in the checked repositories.")
@@ -161,6 +173,8 @@ def check_package_version(
         "source_status": status,
         "default_sources_likely_available": default_sources_available,
         "default_package_version_available": default_package_version_available,
+        "archive_package_available": archive_package_available,
+        "requires_archive_source": requires_archive_source,
         "replacement_source_hint": replacement_source,
         "package_version_verified": package_version_verified,
         "requires_snapshot_source": requires_snapshot_source,
@@ -172,6 +186,9 @@ def check_package_version(
     }
     if snapshot_info:
         result.update(snapshot_info)
+    source_config = _archived_source_config(distribution, normalized_release)
+    if source_config and (archive_package_available or requires_archive_source):
+        result.update(source_config)
     return result
 
 
@@ -248,6 +265,10 @@ def check_package_dependencies(
     source_config = _archived_source_config(distribution, normalized_release)
     if source_config:
         result.update(source_config)
+        result["archive_package_available"] = any(
+            bool(check.get("archive_package_available")) for check in checks
+        )
+        result["requires_archive_source"] = bool(result["archive_package_available"])
     return result
 
 
@@ -463,11 +484,17 @@ def _available_package_names(distribution: str, release: str) -> frozenset[str]:
     """Load repository indexes once and return all available package names."""
     package_texts: list[tuple[str, str]] = []
     if distribution == "debian":
+        source_config = _archived_source_config(distribution, release)
+        base_url = (
+            "http://archive.debian.org/debian"
+            if source_config
+            else "https://deb.debian.org/debian"
+        )
         package_texts.append(
             (
                 "Package: ",
                 _fetch_xz_text(
-                    f"https://deb.debian.org/debian/dists/{release}/"
+                    f"{base_url}/dists/{release}/"
                     "main/binary-amd64/Packages.xz"
                 ),
             )

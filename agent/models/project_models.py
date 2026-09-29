@@ -88,19 +88,6 @@ class ArtifactFact:
     available: bool
     notes: list[str]
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ArtifactFact":
-        """Restore one artifact fact from a dictionary."""
-        return cls(
-            fact_type=_ensure_str(data.get("fact_type"), "fact_type"),
-            source=_ensure_str(data.get("source"), "source"),
-            identifier=_ensure_str(data.get("identifier"), "identifier"),
-            version=_ensure_str(data.get("version"), "version"),
-            ref=_ensure_str(data.get("ref"), "ref"),
-            available=_ensure_bool(data.get("available"), "available"),
-            notes=_ensure_list_of_str(data.get("notes"), "notes"),
-        )
-
     def to_dict(self) -> dict[str, Any]:
         """Convert an artifact fact object back to a dictionary."""
         return asdict(self)
@@ -577,30 +564,7 @@ class BuildPlan:
     selected_package_repo: str
     selected_package_name: str
     build_style: str
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "BuildPlan":
-        """Restore a build plan from planner output."""
-        return cls(
-            build_path=_ensure_str(data.get("build_path"), "build_plan.build_path"),
-            selected_version=_ensure_str(
-                data.get("selected_version"), "build_plan.selected_version"
-            ),
-            selected_image=_ensure_str(
-                data.get("selected_image"), "build_plan.selected_image"
-            ),
-            selected_download_url=_ensure_str(
-                data.get("selected_download_url"), "build_plan.selected_download_url"
-            ),
-            selected_package_repo=_ensure_str(
-                data.get("selected_package_repo"),
-                "build_plan.selected_package_repo",
-            ),
-            selected_package_name=_ensure_str(
-                data.get("selected_package_name"), "build_plan.selected_package_name"
-            ),
-            build_style=_ensure_str(data.get("build_style"), "build_plan.build_style"),
-        )
+    build_resources: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a serializable structure."""
@@ -615,19 +579,6 @@ class ProbeRequest:
     db_type: str
     version: str
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ProbeRequest":
-        """Restore a probe request from planner output."""
-        return cls(
-            action=_ensure_str(data.get("action"), "probe_requests[].action"),
-            db_type=_ensure_str(data.get("db_type"), "probe_requests[].db_type"),
-            version=_ensure_str(data.get("version"), "probe_requests[].version"),
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to a serializable structure."""
-        return asdict(self)
-
 @dataclass
 class EnvironmentPlan:
     """Final output of the planner agent."""
@@ -635,37 +586,6 @@ class EnvironmentPlan:
     build_plan: BuildPlan
     generation_requirements: dict[str, Any]
     verified_artifacts: list[ArtifactFact]
-
-    @classmethod
-    def from_dict(
-        cls,
-        data: dict[str, Any],
-        artifact_facts: list[ArtifactFact] | None = None,
-    ) -> "EnvironmentPlan":
-        """Restore the complete environment plan from planner output."""
-        verified_artifacts = artifact_facts
-        if verified_artifacts is None:
-            artifact_payload = data.get("verified_artifacts")
-            if artifact_payload is None:
-                artifact_payload = data.get("artifact_facts")
-            verified_artifacts = [
-                ArtifactFact.from_dict(item)
-                for item in _ensure_list_of_dict(
-                    artifact_payload, "environment_plan.verified_artifacts"
-                )
-            ]
-        requirements = data.get("generation_requirements")
-        if requirements is None:
-            requirements = data.get("requirements")
-        if not isinstance(requirements, dict):
-            requirements = {}
-        return cls(
-            build_plan=BuildPlan.from_dict(
-                data.get("build_plan") if isinstance(data.get("build_plan"), dict) else {}
-            ),
-            generation_requirements=requirements,
-            verified_artifacts=verified_artifacts,
-        )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a serializable structure."""
@@ -690,28 +610,8 @@ class ImageResolution:
     checked_candidates: list[str]
     notes: list[str]
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ImageResolution":
-        """Restore a legacy image resolution result from a dictionary."""
-        return cls(
-            db_type=_ensure_str(data.get("db_type"), "db_type"),
-            requested_version=_ensure_str(
-                data.get("requested_version"), "requested_version"
-            ),
-            namespace=_ensure_str(data.get("namespace"), "namespace"),
-            repository=_ensure_str(data.get("repository"), "repository"),
-            matched_tag=_ensure_str(data.get("matched_tag"), "matched_tag"),
-            image_ref=_ensure_str(data.get("image_ref"), "image_ref"),
-            strategy=_ensure_str(data.get("strategy"), "strategy"),
-            availability=_ensure_str(data.get("availability"), "availability"),
-            checked_candidates=_ensure_list_of_str(
-                data.get("checked_candidates"), "checked_candidates"
-            ),
-            notes=_ensure_list_of_str(data.get("notes"), "notes"),
-        )
-
     def to_dict(self) -> dict[str, Any]:
-        """Convert a legacy image resolution result back to a dictionary."""
+        """Convert to a serializable structure."""
         return asdict(self)
 
 
@@ -722,8 +622,8 @@ class PipelineResult:
     run_dir: Path
     task: TaskInput
     evidence: list[EvidenceItem]
-    artifacts: ProjectArtifacts
     environment_plan: EnvironmentPlan
+    artifacts: ProjectArtifacts
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the whole pipeline result back to a log structure."""

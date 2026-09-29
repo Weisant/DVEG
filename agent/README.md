@@ -1,34 +1,34 @@
 # Agent Package
 
-`agent/` implements the four-agent main pipeline for `db-env-gc`:
+`agent/` implements DVEG's four-stage main pipeline:
 
-`user input -> parser(+evidence tools) -> profiler -> planner(+artifact tools) -> generator(+file tools)`
+`CVE ID input -> parser(+evidence tools) -> profiler -> planner(+artifact/resource tools) -> generator(+file tools)`
 
 ## parser
 
-Location: [parser.py](/db-env-gc/agent/parser.py)
-Prompt: [prompts/parser.md](/db-env-gc/agent/prompts/parser.md)
+Location: [parser.py](parser.py)
+Prompt: [prompts/parser.md](prompts/parser.md)
 
 Responsibilities:
 
-- Standardize user input into `TaskInput`
-- Call `tools/evidence_tools.py` directly to collect external evidence when the task contains a CVE
+- Validate a single CVE ID into `TaskInput`
+- Call `tools/evidence_tools.py` directly to collect external evidence for that CVE
 - Output `ParsedTaskBundle`
 
 ## profiler
 
-Location: [profiler.py](/db-env-gc/agent/profiler.py)
-Prompt: [prompts/profiler.md](/db-env-gc/agent/prompts/profiler.md)
+Location: [profiler.py](profiler.py)
+Prompt: [prompts/profiler.md](prompts/profiler.md)
 
 Responsibilities:
 
-- Generate `EnvironmentProfile` from the standardized task, database type inference, relevance classification, and parser evidence context
+- Generate `EnvironmentProfile` from the validated CVE task, database type inference, relevance classification, and parser evidence context
 - Decide the affected asset, final version, version ecosystem, runtime configuration, artifact requirements, vulnerability conditions, and build semantic constraints
 - Do not select Docker build paths or call image/source probing tools
 
 ## planner
 
-Location: [planner.py](/db-env-gc/agent/planner.py)
+Location: [planner.py](planner.py)
 Runtime rules: `strategy-selection/decision_graph.yaml`, `templates/db_build_path_catalog.jsonl`, `templates/dockerhub_repository_catalog.jsonl`
 
 Responsibilities:
@@ -36,7 +36,8 @@ Responsibilities:
 - Consume only the profiler profile
 - Execute the decision graph and read local template indexes
 - Select an image candidate at DockerHub nodes and call tools to verify the tag
-- Output `EnvironmentPlan` for the generator
+- Select build strategy and build resources, including base images, dependency packages, and URLs
+- Output `EnvironmentPlan` for the generator, with strategy and resources carried in `BuildPlan`
 
 Planner build paths include:
 
@@ -50,19 +51,31 @@ Planner build paths include:
 
 ## generator
 
-Location: [generator.py](/db-env-gc/agent/generator.py)
-Prompt: [prompts/generator/core.md](/db-env-gc/agent/prompts/generator/core.md)
+Location: [generator.py](generator.py)
+Prompt: [prompts/generator/core.md](prompts/generator/core.md)
 
 Responsibilities:
 
-- Generate complete Docker project files only from the `EnvironmentPlan` build blueprint assembled by the planner
-- Call file tools inside the generator to create the run directory and write files
-- Output `ProjectArtifacts`, the run directory, and the list of written files
+- Consume the planner-produced `EnvironmentPlan`
+- Generate complete Docker project file contents as `ProjectArtifacts`
+- Call file tools to create the run directory and write files
+
+## minimal generator
+
+Location: [minimal_generator.py](minimal_generator.py)
+
+Used only by `--ablation minimal-generator`.
+
+Responsibilities:
+
+- Generate `ProjectArtifacts` from the same `EnvironmentPlan`
+- Use only a schema-level ProjectArtifacts prompt
+- Skip the rule-rich generator prompt
 
 ## Data Flow
 
 The core data flow is:
 
-`TaskInput + Evidence -> EnvironmentProfile -> EnvironmentPlan -> ProjectArtifacts`
+`TaskInput + Evidence -> EnvironmentProfile -> EnvironmentPlan(BuildPlan strategy + resources) -> ProjectArtifacts -> files`
 
 The main flow no longer uses separate `artifact_plan`, `validator`, or `state` writing modules.

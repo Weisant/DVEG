@@ -14,4 +14,4 @@
 {"db_type":"redis","images":["redis"],"policy":"check","notes":["Extracted from db_build_path_catalog official_image."]}
 {"db_type":"solr","images":["solr"],"policy":"check","notes":["Extracted from db_build_path_catalog official_image."]}
 {"db_type":"sqlite","images":["sqlite"],"policy":"check","notes":["Extracted from db_build_path_catalog official_image."]}
-{"db_type":"tidb","images":["pingcap/tidb"],"policy":"check","notes":["Extracted from db_build_path_catalog official_image."]}
+{"db_type":"tidb","images":["pingcap/tidb"],"policy":"check","tag_templates":["v$VERSION","$VERSION"],"notes":["TiDB DockerHub tags use a v-prefixed semantic version, such as pingcap/tidb:v6.1.0."]}

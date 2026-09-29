@@ -1,6 +1,7 @@
-"""LLM-driven task parser.
+"""CVE-only task parser.
 
-This module converts user input into `TaskInput` and directly calls evidence tools to collect external evidence when the task contains a CVE.
+This module validates a single CVE ID into `TaskInput` and directly calls
+evidence tools to collect external evidence for that CVE.
 """
 
 from __future__ import annotations
@@ -13,8 +14,6 @@ from agent.models import ParsedTaskBundle, TaskInput
 from agent.prompt_loader import load_prompt
 from tools.evidence_tools import (
     DATABASE_TYPE_ALIASES,
-    build_unavailable_nvd_info,
-    build_user_supplied_database_decision,
     cve_info_to_evidence_items,
     fetch_nvd_cve_info,
     fetch_official_advisories,
@@ -40,32 +39,29 @@ def parse_task(
     client: JsonChatClient,
     status_callback: StatusCallback | None = None,
 ) -> TaskInput:
-    """Use the LLM to standardize user input into TaskInput."""
+    """Validate the single supported user input and wrap it in TaskInput."""
+    del client
     raw_request = raw_request.strip()
     if not raw_request:
-        raise ValueError("Task content cannot be empty.")
+        raise ValueError("CVE input cannot be empty.")
 
-    _update_status(status_callback, "Parsing the user request with the LLM")
-    system_prompt = load_prompt("parser.md")
-    user_prompt = (
-        "Request type: parse_task\n"
-        "Convert the user request below into standardized task JSON.\n\n"
-        f"{json.dumps({'raw_request': raw_request}, ensure_ascii=False, indent=2)}"
+    _update_status(status_callback, "Validating CVE input")
+    cve_id = normalize_cve_id(raw_request)
+    return TaskInput(
+        cve_id=cve_id,
+        db_type="",
+        version="",
+        port="",
+        database="",
+        username="",
+        password="",
+        root_password="",
+        project_name="",
+        config={},
+        notes=[],
+        raw_request=cve_id,
+        requested_version="",
     )
-    response = client.chat_json(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=0,
-        model=client.settings.parser_model,
-    )
-    _update_status(status_callback, "Validating the standardized TaskInput")
-    # Use the current real input regardless of whether the model echoes `raw_request`, avoiding context drift.
-    task_data = dict(response)
-    task_data["raw_request"] = raw_request
-    task_data.setdefault("project_name", "")
-    task = TaskInput.from_dict(task_data)
-    task.requested_version = task.version
-    return task
 
 
 def parse_task_bundle(
@@ -76,17 +72,8 @@ def parse_task_bundle(
     status_callback: StatusCallback | None = None,
     notice_callback: NoticeCallback | None = None,
 ) -> ParsedTaskBundle:
-    """Parse user input and complete CVE evidence collection inside the parser."""
+    """Parse CVE input and complete CVE evidence collection inside the parser."""
     task = parse_task(raw_request, client, status_callback)
-    if not task.cve_id.strip():
-        _update_status(status_callback, "No CVE detected; preparing parser output")
-        return ParsedTaskBundle(
-            task=task,
-            evidence=[],
-            inferred_db_type="",
-            vulnerability_info=build_profiler_vulnerability_info(task, {}),
-        )
-
     integrated_cve_info = collect_integrated_cve_info(
         task,
         client,
@@ -130,26 +117,14 @@ def collect_integrated_cve_info(
         decision = cached_info.get("database_decision")
         if isinstance(decision, dict) and _is_unrelated_database_decision(decision):
             raise ValueError(f"{cve_id} is not a database-related vulnerability: {decision.get('reason', '')}")
-        return _apply_requested_db_type(task, cached_info)
+        return _apply_inferred_database_decision(cached_info)
 
     collection_errors: list[str] = []
     try:
         _update_status(status_callback, f"Querying NVD for {cve_id}")
         nvd_info = fetch_nvd_cve_info(cve_id)
     except (RuntimeError, ValueError) as exc:
-        if not task.db_type.strip():
-            raise RuntimeError(
-                f"NVD query failed for {cve_id}, and the user did not provide a database type, so execution cannot continue: {exc}"
-            ) from exc
-        nvd_info = build_unavailable_nvd_info(cve_id)
-        collection_errors.append(
-            f"NVD query failed, continued because user provided "
-            f"db_type={task.db_type}: {exc}"
-        )
-        database_decision = build_user_supplied_database_decision(
-            db_type=task.db_type,
-            nvd_error=str(exc),
-        )
+        raise RuntimeError(f"NVD query failed for {cve_id}: {exc}") from exc
     else:
         _update_status(status_callback, "Classifying database relevance with the LLM")
         database_decision = classify_cve_database_relevance(
@@ -167,10 +142,7 @@ def collect_integrated_cve_info(
         "database_decision": database_decision,
         "nvd": nvd_info,
     }
-    database_decision = _resolve_database_decision_for_task(
-        task=task,
-        integrated_cve_info=integrated_candidate,
-    )
+    database_decision = _resolve_database_decision(integrated_candidate)
     db_type = normalize_database_type(str(database_decision.get("db_type", "")))
     if not db_type:
         raise ValueError(f"{cve_id} was classified as a database vulnerability, but the database type could not be determined.")
@@ -209,22 +181,21 @@ def build_profiler_vulnerability_info(
     task: TaskInput,
     integrated_cve_info: dict,
 ) -> dict:
-    """Build the context passed from parser to profiler, explicitly including user input, NVD, and official advisories."""
-    task_payload = task.to_dict()
+    """Build the context passed from parser to profiler, including CVE evidence."""
+    task_payload = {"cve_id": task.cve_id}
     has_cve = bool(task.cve_id.strip())
     if not integrated_cve_info:
-        requested_db_type = normalize_database_type(task.db_type) if task.db_type else ""
         return {
             "has_cve": has_cve,
             "evidence_status": "none",
-            "requested_db_type": requested_db_type,
+            "requested_db_type": "",
             "affected_db_types": [],
-            "user_input_info": {
-                "raw_request": task.raw_request,
+            "cve_input_info": {
+                "cve_id": task.cve_id,
                 "parsed_task": task_payload,
             },
             "cve_id": task.cve_id,
-            "db_type": requested_db_type,
+            "db_type": "",
             "database_decision": {},
             "nvd": {},
             "official_advisories": [],
@@ -260,10 +231,10 @@ def build_profiler_vulnerability_info(
             official_advisories=official_advisories,
             collection_errors=integrated_cve_info.get("collection_errors", []),
         ),
-        "requested_db_type": normalize_database_type(task.db_type) if task.db_type else "",
+        "requested_db_type": "",
         "affected_db_types": database_decision.get("affected_db_types", []),
-        "user_input_info": {
-            "raw_request": task.raw_request,
+        "cve_input_info": {
+            "cve_id": task.cve_id,
             "parsed_task": task_payload,
         },
         "cve_id": integrated_cve_info.get("cve_id", task.cve_id),
@@ -338,25 +309,18 @@ def _normalize_database_decision(response: dict) -> dict:
     }
 
 
-def _apply_requested_db_type(task: TaskInput, integrated_cve_info: dict) -> dict:
-    """Apply an explicit user db_type to cached or freshly collected CVE info."""
+def _apply_inferred_database_decision(integrated_cve_info: dict) -> dict:
+    """Normalize cached CVE info without accepting user-provided db_type overrides."""
     if not isinstance(integrated_cve_info, dict):
         return integrated_cve_info
     updated_info = dict(integrated_cve_info)
-    updated_info["database_decision"] = _resolve_database_decision_for_task(
-        task=task,
-        integrated_cve_info=updated_info,
-    )
+    updated_info["database_decision"] = _resolve_database_decision(updated_info)
     updated_info["db_type"] = updated_info["database_decision"].get("db_type", "")
     return updated_info
 
 
-def _resolve_database_decision_for_task(
-    *,
-    task: TaskInput,
-    integrated_cve_info: dict,
-) -> dict:
-    """Resolve the target db_type while preserving all affected database products."""
+def _resolve_database_decision(integrated_cve_info: dict) -> dict:
+    """Resolve the inferred target db_type while preserving all affected database products."""
     raw_decision = (
         integrated_cve_info.get("database_decision")
         if isinstance(integrated_cve_info.get("database_decision"), dict)
@@ -373,18 +337,7 @@ def _resolve_database_decision_for_task(
     if inferred_db_type and inferred_db_type not in affected_db_types:
         affected_db_types.append(inferred_db_type)
 
-    requested_db_type = normalize_database_type(task.db_type) if task.db_type else ""
-    if requested_db_type:
-        if affected_db_types and requested_db_type not in affected_db_types:
-            raise ValueError(
-                f"{task.cve_id} affects {', '.join(affected_db_types)}, "
-                f"but the user requested db_type={requested_db_type}."
-            )
-        target_db_type = requested_db_type
-    else:
-        target_db_type = inferred_db_type
-
-    decision["db_type"] = target_db_type
+    decision["db_type"] = inferred_db_type
     decision["affected_db_types"] = affected_db_types
     return decision
 

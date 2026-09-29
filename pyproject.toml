@@ -1,13 +1,14 @@
 [project]
-name = "db-env-gc"
+name = "dveg"
 version = "1.0"
-description = "database environment generator"
+description = "Evidence-driven generation of Docker-based DBMS vulnerability reproduction environments"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "openai>=2.30.0",
     "PyYAML>=6.0.0",
     "trafilatura>=1.8.0",
+    "openpyxl>=3.1.0",
 ]
 
 [tool.setuptools]

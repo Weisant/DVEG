@@ -20,6 +20,7 @@ class TerminalSpinner:
         self._started_at = 0.0
         self._frame_index = 0
         self._last_width = 0
+        self._operations: list[str] = []
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -56,7 +57,13 @@ class TerminalSpinner:
         """Replace the operation description shown after the elapsed time."""
         with self._lock:
             self._operation = operation
+            self._operations.append(operation)
             self._render_once_locked()
+
+    def completed_operations(self) -> list[str]:
+        """Return the operations reported during this stage."""
+        with self._lock:
+            return list(self._operations)
 
     def notice(self, message: str) -> None:
         """Print a persistent message without disrupting the transient status line."""

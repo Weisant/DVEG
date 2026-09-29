@@ -1,9 +1,8 @@
-"""DB Env GC command-line entry point."""
+"""DVEG command-line entry point."""
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -11,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent.runtime.agent import DBEnvGenerationAgent
+from tools.evidence_tools import normalize_cve_id
 
 
 class TeeStream:
@@ -39,7 +39,7 @@ class TeeStream:
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
-        description="DVEG: generate database Docker environments from structured tasks or CVEs."
+        description="DVEG: generate database Docker environments from CVE IDs."
     )
     parser.add_argument(
         "output_directory",
@@ -50,14 +50,54 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--parser-only",
         action="store_true",
-        help="Run only the parser stage, print parser JSON, and stop.",
+        help="Run only the parser stage and stop.",
     )
     parser.add_argument(
         "--cve",
-        default="",
-        help="CVE ID to query directly when --parser-only is used.",
+        type=parse_cli_cve_id,
+        help=(
+            "Single CVE ID to use as the task input, for example CVE-2022-0543. "
+            "If omitted, the program prompts for it after startup."
+        ),
+    )
+    parser.add_argument(
+        "--ablation",
+        default="full",
+        choices=[
+            "full",
+            "no-profiler",
+            "no-planner",
+            "no-generator-verification",
+            "minimal-generator",
+        ],
+        help=(
+            "Run a simplified ablation variant. no-generator-verification is "
+            "kept as a compatibility name for generator verification variants."
+        ),
     )
     return parser
+
+
+def parse_cli_cve_id(value: str) -> str:
+    """Validate and normalize the only supported user input."""
+    try:
+        return normalize_cve_id(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "input must be exactly one CVE ID such as CVE-2022-0543"
+        ) from exc
+
+
+def prompt_for_cve_id() -> str:
+    """Prompt until the user enters one valid CVE ID."""
+    while True:
+        value = input("DVEG CVE ID: ").strip()
+        if not value:
+            raise SystemExit("No CVE ID entered. Exiting.")
+        try:
+            return normalize_cve_id(value)
+        except ValueError:
+            print("Invalid CVE ID. Use a value such as CVE-2022-0543.")
 
 
 def clear_runtime_logs(base_dir: Path) -> tuple[Path, Path]:
@@ -85,32 +125,11 @@ def format_token_usage(usage: dict[str, int] | None) -> str:
     )
 
 
-def read_interactive_task() -> str:
-    """Read a multi-line task from the terminal."""
-    lines: list[str] = []
-    first_line = True
-    while True:
-        prompt = "DVEG request : " if first_line else ""
-        line = input(prompt)
-        first_line = False
-        if not line.strip():
-            break
-        lines.append(line.rstrip())
-    if not lines:
-        raise SystemExit("No input detected. Exiting.")
-    return "\n".join(lines)
-
-
 def main() -> None:
     """Main CLI entry point."""
     args = build_parser().parse_args()
-    if args.cve and not args.parser_only:
-        raise SystemExit("--cve can only be used with --parser-only.")
-    if args.parser_only and not args.cve.strip():
-        raise SystemExit("--parser-only requires --cve.")
 
     base_dir = Path(__file__).resolve().parent
-    # Unless the user explicitly passes another CLI path, default to output/ under the project root.
     output_directory = (
         Path(args.output_directory).resolve()
         if args.output_directory
@@ -121,7 +140,6 @@ def main() -> None:
     terminal_log_path, agents_log_path = clear_runtime_logs(base_dir)
     original_stdout = sys.stdout
     original_stderr = sys.stderr
-    # Measure total duration from actual task submission instead of main startup.
     start_time: float | None = None
     start_timestamp = ""
     task = ""
@@ -145,19 +163,19 @@ def main() -> None:
             agent = DBEnvGenerationAgent(
                 project_directory=output_directory,
                 log_file_path=agents_log_path,
+                ablation_mode=args.ablation,
             )
-            task = args.cve.strip().upper() if args.cve else read_interactive_task()
+            task = args.cve or prompt_for_cve_id()
             start_time = time.time()
             start_timestamp = get_utc_timestamp()
             print(f"\n▶ Run started: {start_timestamp}")
             print(f" Input: {task}")
             if args.parser_only:
-                parser_payload = agent.run_parser_only(
+                agent.run_parser_only(
                     task,
                     refresh_cve_cache=True,
                 )
-                print("\n Parser structured output:")
-                print(json.dumps(parser_payload, ensure_ascii=False, indent=2))
+                print("\n Parser result: payload written to agents_log.txt.")
             else:
                 final_answer = agent.run(task)
                 print(f"\n✓ DVEG result: {final_answer}")

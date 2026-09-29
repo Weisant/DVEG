@@ -1,6 +1,9 @@
-"""LLM-driven structured reproduction profile generator.
+"""LLM-driven structured CVE reproduction profile generator.
 
-The profiler inherits the parser standardized task, database type inference, relevance classification, and integrated evidence context to generate a stable reproduction profile. The planner later consumes only this profile and does not re-decide database type, affected asset, version, or configuration.
+The profiler inherits the parser CVE task, database type inference, relevance
+classification, and integrated evidence context to generate a stable
+reproduction profile. The planner later consumes only this profile and does not
+re-decide database type, affected asset, version, or configuration.
 """
 
 from __future__ import annotations
@@ -35,9 +38,9 @@ def build_environment_profile(
         inferred_db_type=inferred_db_type,
     )
     user_prompt = (
-        "Output a structured EnvironmentProfile JSON from the standardized task and parser context below.\n\n"
-        "Standardized task:\n"
-        f"{json.dumps(task.to_dict(), ensure_ascii=False, indent=2)}\n\n"
+        "Output a structured EnvironmentProfile JSON from the validated CVE task and parser context below.\n\n"
+        "Validated CVE task:\n"
+        f"{json.dumps({'cve_id': task.cve_id}, ensure_ascii=False, indent=2)}\n\n"
         "Parser context for the profiler:\n"
         f"{json.dumps(profiler_context, ensure_ascii=False, indent=2)}"
     )

@@ -9,5 +9,8 @@ terminal_log.txt
 # Generated runs
 output/
 
+# Embedded benchmark checkout
+data/benchmark/version/CVE-2022-0543/exp/
+
 # Local secrets
 agent/.env
