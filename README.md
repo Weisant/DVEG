@@ -1,6 +1,6 @@
 # DVEG
 
-**DVEG (Database Vulnerability Environment Generator)** is an LLM-powered framework for evidence-driven generation of Docker-based DBMS vulnerability reproduction environments.
+**DVEG (DBMS Vulnerability Environment Generator)** is an LLM-powered framework for evidence-driven generation of Docker-based DBMS vulnerability reproduction environments.
 
 Given a CVE ID, DVEG collects and normalizes vulnerability evidence, derives the environment constraints required for reproduction, selects a feasible construction strategy, verifies candidate resources, and generates a runnable Docker project.
 
