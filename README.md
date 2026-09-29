@@ -246,6 +246,6 @@ main.py                 command-line entry point
 
 Use DVEG only against systems you own or are explicitly authorized to test. Generated projects may intentionally contain vulnerable software, insecure defaults, or proof-of-concept material. Keep them isolated, restrict network exposure, remove them after testing, and comply with all applicable laws and third-party licenses.
 
-## License
+## Dataset and Benchmark
 
-No open-source license has been selected yet. Until a license file is added, the repository's source code is not granted for reuse, modification, or redistribution beyond rights provided by applicable law.
+The dataset is in repository [DBVulSet](https://github.com/Weisant/DB-Vul-Set) and the benchmark list is in [/data/benchmark]https://github.com/Weisant/DVEG/tree/main/data/benchmark
