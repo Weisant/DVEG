@@ -248,4 +248,4 @@ Use DVEG only against systems you own or are explicitly authorized to test. Gene
 
 ## Dataset and Benchmark
 
-The dataset is in repository [DBVulSet](https://github.com/Weisant/DB-Vul-Set) and the benchmark list is in [/data/benchmark]https://github.com/Weisant/DVEG/tree/main/data/benchmark
+The dataset is in repository [DBVulSet](https://github.com/Weisant/DB-Vul-Set) and the benchmark list is in [./data/benchmark](https://github.com/Weisant/DVEG/tree/main/data/benchmark).
